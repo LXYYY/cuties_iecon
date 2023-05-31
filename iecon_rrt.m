@@ -66,7 +66,7 @@ xs = zeros(total_k, params.x_dim);
 indoor_scenario = robotScenario(UpdateRate=1/dt,StopTime=sim_t);
 add_wall(indoor_scenario,[0.8 0.8 0.8])
 % robot platform 1
-robot1 = robotPlatform("robot1",indoor_scenario,"InitialBasePosition",[x0' 0],"ReferenceFrame","ENU","IsBinaryOccupied",1);
+robot1 = robotPlatform("robot1",indoor_scenario,"InitialBasePosition",[x0' 0],"ReferenceFrame","ENU","IsBinaryOccupied",1, "Collision","mesh");
 AzimuthResolution = 0.16;
 ElevationResolution = 1.25;
 MaxRange = 7;
@@ -89,17 +89,17 @@ lidar1 = robotSensor("Lidar1",robot1,LidarMode, "MountingLocation",mountp, ...
     "MountingAngles",mounttheta);
 roi1=[-MaxRange MaxRange -MaxRange MaxRange -mountp(3)+0.1 sind(theta)*MaxRange];
 % roi1=[-MaxRange MaxRange -MaxRange MaxRange -sind(theta)*MaxRange sind(theta)*MaxRange];
-updateMesh(robot1,"Cuboid","Size",[1 0.5 1],"Color",[0 0 1]);
+updateMesh(robot1,"Cuboid","Size",[1 0.5 1],"Color",[0 0 1], "Collision","mesh");
 TLidar2robot1 = [eul2rotm(mounttheta,'ZYX') mountp'; 0 0 0 1];
 
 % robot platform 2
-robot2 = robotPlatform("robot2",indoor_scenario,"InitialBasePosition",[params.p_d_t2' 0],"ReferenceFrame","ENU","IsBinaryOccupied",1);
+robot2 = robotPlatform("robot2",indoor_scenario,"InitialBasePosition",[params.p_d_t2' 0],"ReferenceFrame","ENU","IsBinaryOccupied",1, "Collision","mesh");
 mountp2 = [0 0 1.1820]; mounttheta2 = [0 0 0];
 roi2=[-MaxRange MaxRange -MaxRange MaxRange -mountp2(3)+0.1 sind(theta)*MaxRange];
 lidar2 = robotSensor("Lidar2",robot2,LidarMode, "MountingLocation",mountp2, ...
     "MountingAngles",mounttheta2);
 TLidar2robot2 = [eul2rotm(mounttheta2,'ZYX') mountp2'; 0 0 0 1];
-updateMesh(robot2,"Cuboid","Size",[2 1 1],"Color",[0 1 1]);
+updateMesh(robot2,"Cuboid","Size",[2 1 1],"Color",[0 1 1], "Collision","mesh");
 %
 
 
@@ -139,15 +139,21 @@ unicycle = unicycleKinematics("VehicleInputs","VehicleSpeedHeadingRate");
 % 2d map & planner
 ss1_2d = stateSpaceSE2([0.5 10; 0.5 10; -pi pi]);
 sv1_2d = validatorOccupancyMap(ss1_2d);
-map2d = occupancyMap(10,10,res);
+map2d = occupancyMap(12, 12, res);
 map2d.DefaultValue = 0.5;
 sv1_2d.Map = map2d;
 sv1_2d.ValidationDistance = 0.01;
 
 planner1 = plannerRRT(ss1_2d,sv1_2d,'MaxConnectionDistance',0.3,'GoalBias',1);
 
+figure_map2d=figure(10);
+figure_map3d=figure(9);
+figure_scene=figure(1);
+
+localMapN=3;
 
 while advance(indoor_scenario)
+    localMapCnt=0;
     ts(idx) = indoor_scenario.CurrentTime;
 
     % update sensor 1 & current motion of robot 1 & map
@@ -186,13 +192,45 @@ while advance(indoor_scenario)
         pctransform(removeInvalidPoints(sensorReadings1(idx)),rigidtform3d(T1)), MaxRange);
     sv1.Map = map3d;
 
+    [ranges, angles] = pointCloudToPolar(removeInvalidPoints(sensorReadings1(idx)));
+
+    % Insert the ray into the map
+    eul=quat2eul(orientation1(idx,:));
+    T1_2d=[T1(1,4) T1(2,4) eul(1)];
+    % Calculate the end points of each range
+    endpoints_x = T1_2d(1) + ranges .* cos(angles);
+    endpoints_y = T1_2d(2) + ranges .* sin(angles);
+    
+    % Get the size of the map
+    map_x_limits = map2d.XWorldLimits;
+    map_y_limits = map2d.YWorldLimits;
+    
+    % Find which endpoints are within the map limits
+    valid = (endpoints_x >= map_x_limits(1)) & (endpoints_x <= map_x_limits(2)) ...
+          & (endpoints_y >= map_y_limits(1)) & (endpoints_y <= map_y_limits(2));
+    
+    % Filter the ranges and angles based on this
+    valid_ranges = ranges(valid);
+    valid_angles = angles(valid);
+    
+    % Then call insertRay with the filtered data
+    insertRay(map2d, T1_2d, valid_ranges, valid_angles, MaxRange);
+
+    if localMapCnt >= localMapN
+        % Reset all cells to be unoccupied
+        setOccupancy(map2d, [0 0], 0, 'grid')
+        localMapCnt=0;
+    else
+        localMapCnt=localMapCnt+1;
+    end
+    % Reset all cells to be unoccupied
     sv1_2d.Map=map2d;
     
-    if idx == 1
-    % init map
-        [pthObj,solnInfo] = planner1.plan([params.state1(1:2) 0], [params.p_d_f1' 0]);
-        waypoints = pthObj.States(:,1:3);
-    end
+    % if idx == 1
+    % % init map
+    %     [pthObj,solnInfo] = planner1.plan([params.state1(1:2) 0], [params.p_d_f1' 0]);
+    %     waypoints = pthObj.States(:,1:3);
+    % end
 
     % check if the past path is valid for the current map 
     isPathValid = isStateValid(sv1,pthObj.States);
@@ -203,6 +241,17 @@ while advance(indoor_scenario)
     end
 %     params.p_d_t1 = pthObj.States(2,1:2)';
 
+    figure(10);
+    subplot(1,2,1); % create a subplot in the left side
+    show(map2d);
+    title('2D Map');
+    
+    subplot(1,2,2); % create a subplot in the right side
+    show(map3d);
+    title('3D Map');
+
+
+    figure(figure_scene);
     show(map3d,"Parent",ax2)
     refreshdata % Refresh all plot data and visualize.
     drawnow limitrate
@@ -277,29 +326,29 @@ room_size = [12,10];
     wallWidth = 0.25*2;
     wallLength = 10;
     % addMesh(indoor_scenario,"Cylinder","Position",[3 5 2.5],"Size",[2 5],"Color",[0.8 0.8 0.8]);
-    addMesh(indoor_scenario,"Plane","Position",[room_size(1)/2 room_size(2)/2 0],"Size",[room_size(1)+2 room_size(2)+2],"Color",[0.8 0.8 0.8]);
+    addMesh(indoor_scenario,"Plane","Position",[room_size(1)/2 room_size(2)/2 0],"Size",[room_size(1)+2 room_size(2)+2],"Color",[0.8 0.8 0.8],"Collision","mesh");
     % Add outer walls.
 %    addMesh(indoor_scenario,"Box",Position=[0, room_size(2)/2, wallHeight/2],...
 %         Size=[wallWidth, room_size(2)+wallWidth, wallHeight],Color=wallColor,IsBinaryOccupied=true); %left
    addMesh(indoor_scenario,"Box",Position=[room_size(1), room_size(2)/2, wallHeight/2],...
-        Size=[wallWidth, room_size(2)+wallWidth, wallHeight],Color=wallColor,IsBinaryOccupied=true);%right
+        Size=[wallWidth, room_size(2)+wallWidth, wallHeight],Color=wallColor,IsBinaryOccupied=true,Collision="mesh");%right
 %    addMesh(indoor_scenario,"Box",Position=[room_size(1)/2, 0, wallHeight/2],...
 %         Size=[room_size(1)+wallWidth, wallWidth, wallHeight],Color=wallColor,IsBinaryOccupied=true); %bottom
    addMesh(indoor_scenario,"Box",Position=[room_size(1)/2, room_size(2), wallHeight/2],...
-       Size=[room_size(1)+wallWidth, wallWidth, wallHeight],Color=wallColor,IsBinaryOccupied=true); %upper
+       Size=[room_size(1)+wallWidth, wallWidth, wallHeight],Color=wallColor,IsBinaryOccupied=true,Collision="mesh"); %upper
    
 %    addMesh(indoor_scenario,"Box",Position=[room_size(1)*3/8, room_size(2)/2, wallHeight/2],...
 %         Size=[wallWidth*2, wallWidth*2, wallHeight],Color=wallColor,IsBinaryOccupied=true); % centre
 
     % Add inner walls.
     addMesh(indoor_scenario,"Box",Position=[room_size(1)/8, room_size(2)/2, wallHeight/2],...
-        Size=[room_size(1)/4, wallWidth, wallHeight],Color=wallColor,IsBinaryOccupied=true);
+        Size=[room_size(1)/4, wallWidth, wallHeight],Color=wallColor,IsBinaryOccupied=true,Collision="mesh");
     addMesh(indoor_scenario,"Box",Position=[room_size(1)/4, room_size(2)/2, wallHeight/2],...
-        Size=[wallWidth, room_size(2)/3,  wallHeight],Color=wallColor,IsBinaryOccupied=true);
+        Size=[wallWidth, room_size(2)/3,  wallHeight],Color=wallColor,IsBinaryOccupied=true,Collision="mesh");
     addMesh(indoor_scenario,"Box",Position=[room_size(1)*6/8, room_size(2)/2, wallHeight/2],...
-        Size=[room_size(1)/2, wallWidth, wallHeight],Color=wallColor,IsBinaryOccupied=true);
+        Size=[room_size(1)/2, wallWidth, wallHeight],Color=wallColor,IsBinaryOccupied=true,Collision="mesh");
     addMesh(indoor_scenario,"Box",Position=[room_size(1)/2, room_size(2)/2, wallHeight/2],...
-        Size=[wallWidth, room_size(2)/3, wallHeight],Color=wallColor,IsBinaryOccupied=true);
+        Size=[wallWidth, room_size(2)/3, wallHeight],Color=wallColor,IsBinaryOccupied=true,Collision="mesh");
 %     addMesh(indoor_scenario,"Box",Position=[wallLength/8, wallLength/3, wallHeight/2],...
 %         Size=[wallLength/4, wallWidth, wallHeight],Color=wallColor,IsBinaryOccupied=true);
 %     addMesh(indoor_scenario,"Box",Position=[wallLength/4, wallLength/3, wallHeight/2],...
