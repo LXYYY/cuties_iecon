@@ -231,20 +231,46 @@ while advance(indoor_scenario)
     sv1_2d.Map=map2d;
     
     % random generate a local goal state
-    num = 0;
-    while num <= 10
-        if checkOccupancy(map2d,params.p_d_f1') == 0
-            goal=params.p_d_f1';
-            break
-        end
-        z = randsample(size(valid_angles,1),1);
-        goal = [sin(valid_angles(z))*valid_ranges(z) cos(valid_angles(z))*valid_ranges(z)]; 
-        if checkOccupancy(map2d,goal) == 0 && sv1_2d.isStateValid([goal 0])
-            break
-        end
-        num = num +1;
-    end
-    planner1 = plannerRRT(ss1_2d,sv1_2d,'MaxConnectionDistance',0.5,'GoalBias',1);
+    goal=params.p_d_f1';
+
+    map2d.inflate(0.1, "world");
+    [unknown_x, unknown_y]=find(checkOccupancy(map2d)==-1);
+    map2d.setOccupancy([unknown_x unknown_y], 0, 'grid');
+
+    %%
+    % the following code change the goal to the closest free point. 
+    % p=params.state1(1:2);
+    % direction = goal - p; % Calculate direction vector from robot to goal
+    % direction = direction / norm(direction); % Normalize direction vector
+    % buffer = 0.5; % Change this to your desired buffer size
+    % mapInflated = copy(map2d); % Create a copy to keep original map intact
+    % inflate(mapInflated, buffer);
+
+    % Create a meshgrid for the map
+    % [ yGrid,xGrid] = meshgrid(1:mapInflated.GridSize(2), 1:mapInflated.GridSize(1));
+    % xGrid = size(mapInflated.occupancyMatrix, 2) - xGrid + 1;
+    % yGrid = size(mapInflated.occupancyMatrix, 1) - yGrid + 1;
+
+    % while checkOccupancy(map2d,goal) ~= 0
+    %     % Convert goal coordinates to grid cells
+    %     goalGrid = mapInflated.world2grid(goal);
+    % 
+    %     % Calculate the Euclidean distance from every point to the goal
+    %     distances = sqrt((xGrid - goalGrid(1)).^2 + (yGrid - goalGrid(2)).^2);
+    % 
+    %     % Set the distances of occupied cells to infinity so they are not considered
+    %     distances(checkOccupancy(mapInflated)~=0) = inf;
+    % 
+    %     % Find the grid cell with the minimum distance
+    %     [~, goal_idx] = min(distances(:));
+    % 
+    %     % Convert the grid cell coordinates back to world coordinates
+    %     validGoal = grid2world(mapInflated, [xGrid(goal_idx), yGrid(goal_idx)]);
+    % 
+    %     goal=validGoal;
+    % end
+
+    planner1 = plannerRRT(ss1_2d,sv1_2d,'MaxConnectionDistance',0.5,'GoalBias',0);
     [pthObj,solnInfo] = planner1.plan([params.state1(1:2) 0], [goal 0]);
 
     % check if the past path is valid for the current map 
@@ -261,6 +287,10 @@ while advance(indoor_scenario)
     figure(10);
     subplot(1,2,1); % create a subplot in the left side
     show(map2d);
+    hold on
+    plot(goal(1), goal(2), 'ro');
+    plot(params.state1(1), params.state1(2),"bo");
+    hold off
     title('2D Map');
     
     subplot(1,2,2); % create a subplot in the right side
