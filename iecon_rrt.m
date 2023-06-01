@@ -238,8 +238,8 @@ while advance(indoor_scenario)
             break
         end
         z = randsample(size(valid_angles,1),1);
-        goal = [sin(valid_angles(z))*valid_ranges(z) cos(valid_angles(z))*valid_ranges(z)];
-        if checkOccupancy(map2d,goal) == 0
+        goal = [sin(valid_angles(z))*valid_ranges(z) cos(valid_angles(z))*valid_ranges(z)]; 
+        if checkOccupancy(map2d,goal) == 0 && sv1_2d.isStateValid([goal 0])
             break
         end
         num = num +1;
