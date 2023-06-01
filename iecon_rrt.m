@@ -3,7 +3,7 @@ close all;
 clear all;
 
 
-room_size = [10,10];
+room_size = [12,12];
 % Simulation Params
 sim_t = 50;
 % Init state.
@@ -129,12 +129,12 @@ ax2 = show(map3d);ax2.ZLim =[-0.1 5];ax2.XLim = [-2 18];ax2.YLim=[-2 18];
 % generate rrt planner
 ss1 = stateSpaceSE3([0.5 10; 0.5 10; 0 0; inf inf; inf inf; inf inf; inf inf]);
 sv1 = validatorOccupancyMap3D(ss1,"Map",map3d,"ValidationDistance",0.1);
-planner1 = plannerRRTStar(ss1,sv1,"GoalBias",0.1,"MaxConnectionDistance",2);
-[pthObj, solnInfo] = plan(planner1, [params.state1(1:2) 0 1 0 0 0], [params.p_d_f1' 0 1 0 0 0]);
+% planner1 = plannerRRTStar(ss1,sv1,"GoalBias",0.1,"MaxConnectionDistance",2);
+% [pthObj, solnInfo] = plan(planner1, [params.state1(1:2) 0 1 0 0 0], [params.p_d_f1' 0 1 0 0 0]);
 % rng(1, 'twister');
-waypoints = pthObj.States(:,1:2);
-controller1 = controllerPurePursuit("Waypoints",waypoints,"DesiredLinearVelocity",3,"MaxAngularVelocity",3*pi);
-unicycle = unicycleKinematics("VehicleInputs","VehicleSpeedHeadingRate");
+% waypoints = pthObj.States(:,1:2);
+% controller1 = controllerPurePursuit("Waypoints",waypoints,"DesiredLinearVelocity",3,"MaxAngularVelocity",3*pi);
+% unicycle = unicycleKinematics("VehicleInputs","VehicleSpeedHeadingRate");
 
 % 2d map & planner
 ss1_2d = stateSpaceSE2([0.5 10; 0.5 10; -pi pi]);
@@ -145,6 +145,10 @@ sv1_2d.Map = map2d;
 sv1_2d.ValidationDistance = 0.01;
 
 planner1 = plannerRRT(ss1_2d,sv1_2d,'MaxConnectionDistance',0.3,'GoalBias',1);
+% [pthObj,solnInfo] = planner1.plan([params.state1(1:2) 0], [params.p_d_f1' 0]);
+% waypoints = pthObj.States(:,1:2);
+controller1 = controllerPurePursuit("DesiredLinearVelocity",3,"MaxAngularVelocity",3*pi);
+unicycle = unicycleKinematics("VehicleInputs","VehicleSpeedHeadingRate");
 
 figure_map2d=figure(10);
 figure_map3d=figure(9);
@@ -226,19 +230,32 @@ while advance(indoor_scenario)
     % Reset all cells to be unoccupied
     sv1_2d.Map=map2d;
     
-    % if idx == 1
-    % % init map
-    %     [pthObj,solnInfo] = planner1.plan([params.state1(1:2) 0], [params.p_d_f1' 0]);
-    %     waypoints = pthObj.States(:,1:3);
-    % end
+    % random generate a local goal state
+    num = 0;
+    while num <= 10
+        if checkOccupancy(map2d,params.p_d_f1') == 0
+            goal=params.p_d_f1';
+            break
+        end
+        z = randsample(size(valid_angles,1),1);
+        goal = [sin(valid_angles(z))*valid_ranges(z) cos(valid_angles(z))*valid_ranges(z)];
+        if checkOccupancy(map2d,goal) == 0
+            break
+        end
+        num = num +1;
+    end
+    planner1 = plannerRRT(ss1_2d,sv1_2d,'MaxConnectionDistance',0.5,'GoalBias',1);
+    [pthObj,solnInfo] = planner1.plan([params.state1(1:2) 0], [goal 0]);
 
     % check if the past path is valid for the current map 
-    isPathValid = isStateValid(sv1,pthObj.States);
-
-    if sum(isPathValid) ~= pthObj.NumStates
-        % replanning and update the target
-       [pthObj, solnInfo] = plan(planner1,[motion1(1:3) motion1(10:13)],[params.p_d_f1' 0 1 0 0 0]);       
-    end
+    % isPathValid = isStateValid(sv1,pthObj.States);
+    % 
+    % if sum(isPathValid) ~= pthObj.NumStates
+    %     % replanning and update the target
+    %    % [pthObj, solnInfo] = plan(planner1,[motion1(1:3) motion1(10:13)],[params.p_d_f1' 0 1 0 0 0]);
+    %    [pthObj,solnInfo] = planner1.plan([params.state1(1:2) 0], [params.p_d_f1' 0]);
+    %     waypoints = pthObj.States(:,1:3);
+    % end
 %     params.p_d_t1 = pthObj.States(2,1:2)';
 
     figure(10);
@@ -275,7 +292,7 @@ while advance(indoor_scenario)
 %         [u, slack, h, V(idx), clf,cbf, ~] = CbfClfQP(paramCCC, p1(idx,:),params,params.p_d_t1'-p1(idx,:));
 %         toc
         controller1.Waypoints   = pthObj.States(:,1:2);
-        u = exampleHelperMobileRobotController(controller1,[p1(idx,:) theta],[pthObj.States(2,1:2) 0],0.1);
+        u = exampleHelperMobileRobotController(controller1,params.state1,[pthObj.States(2,1:2) 0],0.1);
         % 3. update robot state
         [ts_temp, xs_temp] = ode45(@(t,s)derivative(unicycle,s,u),[t t+dt],params.state1);
 
