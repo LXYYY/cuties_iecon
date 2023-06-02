@@ -235,14 +235,16 @@ while advance(indoor_scenario)
         localMapCnt=localMapCnt+1;
     end
     % Reset all cells to be unoccupied
-    sv1_2d.Map=map2d;
     
     % random generate a local goal state
     goal=params.p_d_f1';
 
-    map2d.inflate(0.1, "world");
-    [unknown_x, unknown_y]=find(checkOccupancy(map2d)==-1);
-    map2d.setOccupancy([unknown_x unknown_y], 0, 'grid');
+    mapInflated=copy(map2d);
+    inflate(mapInflated, 0.1);
+    [unknown_x, unknown_y]=find(checkOccupancy(mapInflated)==-1);
+    mapInflated.setOccupancy([unknown_x unknown_y], 0, 'grid');
+
+    sv1_2d.Map=mapInflated;
 
     %%
     % the following code change the goal to the closest free point. 
