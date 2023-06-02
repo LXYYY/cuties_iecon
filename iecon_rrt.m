@@ -23,6 +23,7 @@ params.v_d2 = [1;-1];
 
 params.x_dim = 3;
 params.u_dim = 2;
+params.y_dim = 3;
 
 dt = 0.1;
 % sim_t = 30;
@@ -48,6 +49,13 @@ params.d_plane = 0.05;
 params.weight.slack = 1;
 params.weight.input = 5;
 
+% mpc params
+params.Ts = 0.1; % Sample time
+params.pHorizon = 10; % Prediction horizon
+params.cHorizon = 2; % Control horizon
+
+nlobj = NMPCcontroller(params);
+
 total_k = ceil(sim_t / dt);
 x = x0;
 t = 0;   
@@ -60,7 +68,7 @@ xs = zeros(total_k, params.x_dim);
 % Vs = zeros(total_k-1, 1);
 % xs(1, :) = x0';
 % ts(1) = t;
-% u_prev = [0;0];
+u_prev = [0;0];
 
 % creat indoor scenario
 indoor_scenario = robotScenario(UpdateRate=1/dt,StopTime=sim_t);
@@ -133,8 +141,7 @@ sv1 = validatorOccupancyMap3D(ss1,"Map",map3d,"ValidationDistance",0.1);
 % [pthObj, solnInfo] = plan(planner1, [params.state1(1:2) 0 1 0 0 0], [params.p_d_f1' 0 1 0 0 0]);
 % rng(1, 'twister');
 % waypoints = pthObj.States(:,1:2);
-% controller1 = controllerPurePursuit("Waypoints",waypoints,"DesiredLinearVelocity",3,"MaxAngularVelocity",3*pi);
-% unicycle = unicycleKinematics("VehicleInputs","VehicleSpeedHeadingRate");
+
 
 % 2d map & planner
 ss1_2d = stateSpaceSE2([0.5 10; 0.5 10; -pi pi]);
@@ -313,35 +320,42 @@ while advance(indoor_scenario)
         break
     else
     % else update controller
-
-        % 1. pointcloud -> CBFs 
-        paramCCC = CBF_estimation(Ptcloud1,T1,params);
-        paramCCCs=[paramCCCs;paramCCC];
-        % 2. conpute u
-%         tic
-%         [u, slack, h, V(idx), clf,cbf, ~] = CbfClfQP(paramCCC, p1(idx,:),params,params.p_d_t1'-p1(idx,:));
-%         toc
-        controller1.Waypoints   = pthObj.States(:,1:2);
-        u = exampleHelperMobileRobotController(controller1,params.state1,[pthObj.States(2,1:2) 0],0.1);
-        % 3. update robot state
-        [ts_temp, xs_temp] = ode45(@(t,s)derivative(unicycle,s,u),[t t+dt],params.state1);
-
-%         [ts_temp, xs_temp] = ode45(@(t, s) odefcn(t, s, u'), [t t+dt], p1(idx,:)');
-%         xs1(idx+1,:) = xs_temp(end, :)';
-xs(idx+1,:) = xs_temp(end, :);
-        u_prev = u;
-        % 3. update robot1 motion
-        motion = [xs_temp(end, 1:2) 0 0 0 0 0 0 0 angle2quat( 0, 0, xs_temp(end, 3), 'YXZ' ) 0 0 0];
+        % MPC controller (replace 1 2 3 4)
+        params.state1
+        [mv,~,~] = nlmpcmove(nlobj,params.state1,u_prev,pthObj.States(:,1:3))
+        xs(idx+1,:) = unicycleDT(params.state1, mv,params.Ts);
+        xs(idx+1,:)
+        u_prev = mv;
+        motion = [xs(idx+1,1:2) 0 0 0 0 0 0 0 angle2quat( 0, 0, xs(idx+1,3), 'YXZ' ) 0 0 0];
         move(robot1,"base", motion);
+% % % % % %         % 1. pointcloud -> CBFs 
+% % % % % %         paramCCC = CBF_estimation(Ptcloud1,T1,params);
+% % % % % %         paramCCCs=[paramCCCs;paramCCC];
+% % % % % %         % 2. conpute u
+% % % % % % %         tic
+% % % % % % %         [u, slack, h, V(idx), clf,cbf, ~] = CbfClfQP(paramCCC, p1(idx,:),params,params.p_d_t1'-p1(idx,:));
+% % % % % % %         toc
+% % % % % %         controller1.Waypoints   = pthObj.States(:,1:2);
+% % % % % %         u = exampleHelperMobileRobotController(controller1,params.state1,[pthObj.States(2,1:2) 0],0.1);
+% % % % % %         % 3. update robot state
+% % % % % %         [ts_temp, xs_temp] = ode45(@(t,s)derivative(unicycle,s,u),[t t+dt],params.state1);
+% % % % % % 
+% % % % % % %         [ts_temp, xs_temp] = ode45(@(t, s) odefcn(t, s, u'), [t t+dt], p1(idx,:)');
+% % % % % % %         xs1(idx+1,:) = xs_temp(end, :)';
+% % % % % % xs(idx+1,:) = xs_temp(end, :);
+% % % % % %         u_prev = u;
+% % % % % %         % 4. update robot1 motion
+% % % % % %         motion = [xs_temp(end, 1:2) 0 0 0 0 0 0 0 angle2quat( 0, 0, xs_temp(end, 3), 'YXZ' ) 0 0 0];
+% % % % % %         move(robot1,"base", motion);
 
-        % update robot2 motion
-        paramCCC2 = CBF_estimation(Ptcloud2,T2,params);
-        paramCCC2s=[paramCCC2s;paramCCC2];
-        [u, slack, h, V(idx), clf,cbf, ~] = CbfClfQP(paramCCC2,p2(idx,:),params,params.p_d_t2'-p2(idx,:));
-        [ts_temp, xs_temp] = ode45(@(t, s) odefcn(t, s, u'), [t t+dt], p2(idx,:)');
-        motion = [ xs_temp(end, :) 0 u 0 0 0 0 angle2quat( 0, 0, 0, 'YXZ' ) 0 0 0];
-        xs2(idx+1,:) = xs_temp(end, :)';
-        move(robot2,"base", motion);
+        % % update robot2 motion
+        % paramCCC2 = CBF_estimation(Ptcloud2,T2,params);
+        % paramCCC2s=[paramCCC2s;paramCCC2];
+        % [u, slack, h, V(idx), clf,cbf, ~] = CbfClfQP(paramCCC2,p2(idx,:),params,params.p_d_t2'-p2(idx,:));
+        % [ts_temp, xs_temp] = ode45(@(t, s) odefcn(t, s, u'), [t t+dt], p2(idx,:)');
+        % motion = [ xs_temp(end, :) 0 u 0 0 0 0 angle2quat( 0, 0, 0, 'YXZ' ) 0 0 0];
+        % xs2(idx+1,:) = xs_temp(end, :)';
+        % move(robot2,"base", motion);
 
 
     end
@@ -435,3 +449,5 @@ end
 
 robotRefState = [vRef; wRef];
 end
+
+
